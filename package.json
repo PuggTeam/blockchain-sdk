@@ -1,5 +1,5 @@
 {
-  "name": "blockchain-sdk",
+  "name": "pugg-sdk",
   "version": "1.0.0",
   "description": "SDK for interacting with PUGG's smart contracts via web3",
   "main": "index.js",
