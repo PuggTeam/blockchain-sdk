@@ -25,7 +25,7 @@ class Wallet {
     return null;
   }
 }
-module.exports = Wallet;
+module.exports = new Wallet();
 // const wall = new Wallet();
 // wall.importAccountFromMnemonic(
 //   'tunnel penalty legal property alpha agree lyrics village canal biology cross select'
