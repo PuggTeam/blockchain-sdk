@@ -16,13 +16,9 @@ class Wallet {
   }
 
   getSelectedAccountPrivateKey() {
-    if (this.selectedWallet) {
-      /* eslint-disable-next-line no-underscore-dangle */
-      return `0x${this.selectedWallet._children[0].wallet
-        .getPrivateKey()
-        .toString('hex')}`;
-    }
-    return null;
+    /* eslint-disable-next-line no-underscore-dangle */
+    const [address] = this.wallet.generateAddresses(1);
+    return `0x${this.wallet.getPrivateKey(address).toString('hex')}`;
   }
 }
 module.exports = new Wallet();
@@ -30,5 +26,5 @@ module.exports = new Wallet();
 // wall.importAccountFromMnemonic(
 //   'tunnel penalty legal property alpha agree lyrics village canal biology cross select'
 // );
-// console.log(wall.wallet);
-// console.log(wall.generateMnemonic());
+// console.log(wall.wallet.getPrivateKey());
+// console.log(wall.getSelectedAccountPrivateKey());
