@@ -1,66 +1,48 @@
-const w = require('./utils/wallet');
+var Web3 = require('web3');
 
-export default class Transaction {
-  constructor(config, networks) {
-    this.config = config;
-    this.networks = networks;
-    this.privateKey = null;
+class Transaction {
+  constructor(rpcURL, privateKey) {
+    this.rpcURL = rpcURL;
+    this.web3 = new Web3(this.rpcURL);
+    this.privateKey = privateKey;
+    this.account = this.web3.eth.accounts.privateKeyToAccount(this.privateKey);
+    this.tokens = {}
   }
 
-  /* EXTERNAL FUNCTIONS */
+  addTokenContract(jsonInterface, address) {
+    let token = new web3.eth.Contract(jsonInterface, address)
+    this.tokens[address] = token
+  }
 
-  async send(networkName, txData, privateKey = null) {
-    const { promiEvent } = await this.sendTx(
-      this.networks.getWeb3(networkName),
-      this.addDefaults(txData, networkName),
-      privateKey ? privateKey : this.privateKey
-    );
-    return { promiEvent };
+  getAddress() {
+    return this.account.address
   }
 
   /* HELPER FUNCTIONS */
-
-  addDefaults(txData, networkName) {
-    return {
-      ...txData,
-      gasPrice:
-        txData.gasPrice !== undefined
-          ? txData.gasPrice
-          : this.networks.getConfig(networkName).gasPrice
-    };
+  async _estimateGasLimit(txData) {
+    return Math.round((await this.web3.eth.estimateGas(txData)) * 1.5);
   }
 
-  async estimateGas(web3, txData) {
-    return Math.round(
-      (await web3.eth.estimateGas(txData)) * this.config.gasEstimationMargin
-    );
+  async send(_to, value) {
+    let txData = {
+      from: this.account.address,  // accounts[0]
+      to: _to,    // accounts[1]
+      // Please pass numbers as strings or BN objects to avoid precision errors.
+      value: this.web3.utils.toHex(this.web3.utils.toWei(value.toString(), 'ether'))
+      // data: '0x'
+    }
+    txData.gasPrice = await this.web3.eth.getGasPrice();
+    txData.gasLimit = await this._estimateGasLimit(txData);
+
+    const signedTx = await this.account.signTransaction(txData);
+    const result = await this.web3.eth.sendSignedTransaction(signedTx.rawTransaction);
+    return result
   }
 
-  async sendTx(web3, txData, privateKey = null) {
-    txData.gas = await this.estimateGas(web3, txData);
-
-    if (
-      privateKey === null ||
-      txData.from === null ||
-      web3.eth.accounts
-        .privateKeyToAccount(privateKey)
-        .address.toLowerCase() !== txData.from.toLowerCase()
-    ) {
-      const promiEvent = web3.eth.sendTransaction(txData);
-      return { promiEvent };
-    }
-
-    const account = web3.eth.accounts.privateKeyToAccount(privateKey);
-    if (txData.from.toLowerCase() !== account.address.toLowerCase()) {
-      throw new Error(
-        'Private key does not match from address in transaction object.'
-      );
-    }
-
-    const signedTx = await account.signTransaction(txData);
-    const promiEvent = web3.eth.sendSignedTransaction(signedTx.rawTransaction);
-    return { promiEvent };
+  async getBalance(address) {
+    let balance = await this.web3.eth.getBalance(address);
+    return balance
   }
 }
 
-module.exports = Wallet;
+module.exports = Transaction
