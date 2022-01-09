@@ -3,7 +3,7 @@ dotenv.config();
 const w = require('../utils/wallet');
 const Transaction =  require('../utils/transfer');
 const TokenERC20 =  require('../utils/tokenERC20');
-const IERC20 = require('./abi/IERC20.json');
+const IERC20 = require('../abi/IERC20.json');
 
 
 const RPC_URL = process.env.RPC_URL;
