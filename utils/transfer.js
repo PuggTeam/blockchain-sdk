@@ -24,7 +24,9 @@ class Transaction {
   }
 
   async send(_to, value) {
+    // let number = await this.web3.eth.getTransactionCount(this.account.address);
     let txData = {
+      // nonce: '0x' + number.toString(16),
       from: this.account.address,  // accounts[0]
       to: _to,    // accounts[1]
       // Please pass numbers as strings or BN objects to avoid precision errors.
