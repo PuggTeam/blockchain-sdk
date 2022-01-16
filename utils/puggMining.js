@@ -11,7 +11,9 @@ class PuggMining {
 
   /* HELPER FUNCTIONS */
   signDoneTask (taskId) {
-    let result = this.account.sign(this.web3.utils.soliditySha3("doneTask(uint256)", taskId.toString()));
+    let result = this.account.sign(this.web3.utils.soliditySha3("doneTask(address signer,uint256 taskId,uint256 points)",this.account.address,
+    this.web3.utils.toBN(taskId),
+    this.web3.utils.toWei("100", 'ether')));
     result.signer = this.account.address;
     result.taskId = taskId
     return result
