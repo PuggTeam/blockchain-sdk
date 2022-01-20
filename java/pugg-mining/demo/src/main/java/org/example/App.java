@@ -11,8 +11,8 @@ import java.math.BigInteger;
  */
 public class App 
 {
-    static String rpcURL = "HTTP://127.0.0.1:7545"; //本地测试链的 rpc 节点地址
-    static String contractAddress = "0x23e6BA588381c25Ce1Cd6aeC7f204D65C85cBF7a";  //本地测试链的 合约地址
+    static String rpcURL = "http://127.0.0.1:7545"; //本地测试链的 rpc 节点地址
+    static String contractAddress = "0x61A0b117F19cfc54Fe00883eAa7420f133f3B7B0";  //本地测试链的 合约地址
 
     public static void main( String[] args )
     {
@@ -27,10 +27,10 @@ public class App
 
         //初始化之后可以 开始调用合约方法
         //# 1 isExist  根据 taskId 判断任务是否存在
-        boolean result = Mining.isExist(BigInteger.valueOf(1));  // taskId = 1
+        boolean result = Mining.isExist(BigInteger.valueOf(1000));  // taskId = 1
 
         //# 2 getTaskPoints 根据 taskId 获取任务完成后的积分奖励 如果任务不存在则返回 null
-        BigInteger points = Mining.getTaskPoints(BigInteger.valueOf(1));
+        BigInteger points = Mining.getTaskPoints(BigInteger.valueOf(1100));
 
         /*# 3 signDoneTask 完成任务签名
         传入参数:

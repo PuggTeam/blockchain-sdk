@@ -12,27 +12,39 @@ import org.web3j.protocol.core.DefaultBlockParameterName;
 import org.web3j.protocol.core.methods.request.Transaction;
 import org.web3j.protocol.core.methods.response.*;
 import org.web3j.protocol.http.HttpService;
+import org.web3j.tx.gas.DefaultGasProvider;
+import org.web3j.utils.Collection;
 import org.web3j.utils.Numeric;
+
+import java.io.IOException;
 import java.math.BigInteger;
 import java.security.InvalidAlgorithmParameterException;
 import java.security.NoSuchAlgorithmException;
 import java.security.NoSuchProviderException;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 
-public class Mining {
+public class Mining implements PuggService{
 
-    static Web3j        web3j;
-    static Credentials  credentials;
-    static String       contractAddress;
-    static final String signMessage = "doneTask(address signer,uint256 taskId,uint256 points)";
+    private Web3j           web3j;
+    private Credentials     credentials;
+    private String          contractAddress;
+    private boolean         isInit = false;
+    private volatile static Mining singleton;  //1:volatile修饰
+    
 
     private Mining() {}
-
-    public static void Init (String rpcURL, String privateKey, String _contractAddress) {
-        web3j = Web3j.build(new HttpService(rpcURL));
-        credentials = Credentials.create(privateKey);
-        contractAddress = _contractAddress;
+    public static Mining getSingleton() {
+        if (singleton == null) {  //2:减少不要同步，优化性能
+            synchronized (Mining.class) {  // 3：同步，线程安全
+                if (singleton == null) {
+                    singleton = new Mining();  //4：创建singleton 对象
+                }
+            }
+        }
+        return singleton;
     }
 
 //    public static String generateMnemonic() {
@@ -41,11 +53,11 @@ public class Mining {
 //        return MnemonicUtils.generateMnemonic(initialEntropy);
 //    }
 
-    public static String getAddress () {
+    public String getAddress () {
         return credentials.getAddress();
     }
 
-    public static String generatePrivateKey() {
+    public String generatePrivateKey() {
         String privateKey = null;
         try {
             ECKeyPair ecKeyPair = Keys.createEcKeyPair(SecureRandomUtils.secureRandom());
@@ -62,26 +74,8 @@ public class Mining {
         }
     }
 
-    public static Boolean isExist (BigInteger taskId) {
-        Boolean result = false;
-        try {
-            Function function = new Function(
-                    "isExist",
-                    Arrays.asList(new Uint256(taskId)),
-                    Arrays.asList(new TypeReference<Bool>(){}));
-            String encodedFunction = FunctionEncoder.encode(function);
-            EthCall response = web3j.ethCall(
-                    Transaction.createEthCallTransaction(null, contractAddress, encodedFunction),
-                    DefaultBlockParameterName.LATEST).send();
-            List<Type> results = FunctionReturnDecoder.decode(response.getValue(), function.getOutputParameters());
-            Bool preValue = (Bool)results.get(0);
-            result = preValue.getValue();
-        } finally {
-            return result;
-        }
-    }
-
-    public static BigInteger getTaskPoints (BigInteger taskId) {
+    private BigInteger _getTaskPoints (BigInteger taskId) {
+        if (!isInit) { return null; }
         BigInteger result = null;
         try {
             Function function = new Function(
@@ -94,8 +88,13 @@ public class Mining {
                     DefaultBlockParameterName.LATEST).send();
 
             List<Type> results = FunctionReturnDecoder.decode(response.getValue(), function.getOutputParameters());
-            Uint256 points = (Uint256)results.get(2);
-            result = points.getValue();
+            if (results.size() == 4) {
+                Uint8 active = (Uint8)results.get(3);
+                if (active.getValue().compareTo(BigInteger.valueOf(1)) == 0) {
+                    Uint256 points = (Uint256)results.get(2);
+                    result = points.getValue();
+                }
+            }
         } catch (Exception e) {
             e.printStackTrace();
         } finally {
@@ -103,33 +102,190 @@ public class Mining {
         }
     }
 
-    public static JSONObject signDoneTask (BigInteger taskId, BigInteger points) {
-        JSONObject result = new JSONObject();
-        byte[] data =  SolidityPackEncoder.soliditySHA3(Arrays.asList(
-                new Utf8String(signMessage),
-                new Address(credentials.getAddress()),
-                new Uint256(taskId),
-                new Uint256(points)));
-        Sign.SignatureData sgindata = Sign.signPrefixedMessage(data, credentials.getEcKeyPair());
-        String signature = Numeric.toHexString(sgindata.getR()) + Numeric.toHexString(sgindata.getS()).substring(2) + Numeric.toHexString(sgindata.getV()).substring(2);
-        result.put("message", signMessage);
-        result.put("signer", credentials.getAddress());
-        result.put("taskId", taskId);
-        result.put("points", points);
-        result.put("signature", signature);
-        return result;
+    private BigInteger _getTransactionGasLimit(Transaction transaction) {
+        try {
+            EthEstimateGas ethEstimateGas = web3j.ethEstimateGas(transaction).send();
+            if (ethEstimateGas.hasError()){
+                throw new RuntimeException(ethEstimateGas.getError().getMessage());
+            }
+            return ethEstimateGas.getAmountUsed();
+        } catch (IOException e) {
+            throw new RuntimeException("net error");
+        }
     }
 
-    public static void release () {
-        web3j.shutdown();
-    }
-
-
-    private static BigInteger getNonce(String address) throws Exception {
+    private BigInteger _getNonce(String address) throws Exception {
         EthGetTransactionCount ethGetTransactionCount =
                 web3j.ethGetTransactionCount(address, DefaultBlockParameterName.LATEST)
                         .sendAsync()
                         .get();
         return ethGetTransactionCount.getTransactionCount();
+    }
+
+    /**
+     * 每次用户完成了一次踩单车，会调用该接口获取签名后的表单
+     *
+     * @param miningType 接口参数预留，该参数暂时不用例会
+     * @return 结果表单
+     */
+    @Override
+    public JSONObject ClientGetMiningSign(int miningType) {
+        if (!isInit) { return null; }
+        JSONObject result = null;
+        BigInteger point = _getTaskPoints(BigInteger.valueOf(1000));
+        if (point != null) {
+            result = new JSONObject();
+            result.put("code", "OK");
+            result.put("signer", credentials.getAddress());
+            result.put("taskId", BigInteger.valueOf(1000));
+            result.put("point", point);
+            result.put("timestamp", System.currentTimeMillis());
+        }
+        else {
+            result.put("code", "ERROR");
+            result.put("error", "task does not exist or is not active");
+        }
+        return result;
+    }
+
+    /**
+     * 获取今天发放的用于 所有用户 踩单车的代币数量，这个函数会在服务器端一天中某一固定时刻调用，获取一次。
+     *
+     * @return 结果表单
+     */
+    @Override
+    public JSONObject ServerGetCoinCountToday() {
+        if (!isInit) { return null; }
+        JSONObject result = null;
+        try {
+            Function function = new Function(
+                    "getCoinCountPerDay",
+                    Collections.emptyList(),
+                    Arrays.asList(new TypeReference<Uint256>() {}));
+            String encodedFunction = FunctionEncoder.encode(function);
+            EthCall response = web3j.ethCall(
+                    Transaction.createEthCallTransaction(null, contractAddress, encodedFunction),
+                    DefaultBlockParameterName.LATEST).send();
+
+            List<Type> results = FunctionReturnDecoder.decode(response.getValue(), function.getOutputParameters());
+            if (results.size() == 1) {
+                Uint256 points = (Uint256)results.get(0);
+                result = new JSONObject();
+                result.put("code", "OK");
+                result.put("points", points.getValue());
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+        } finally {
+            return result;
+        }
+    }
+
+    /**
+     * 用于服务器批量上传某一时段所有用户挖矿情况
+     *
+     * @param batchData 数组中 String 为 GetMiningSign 返回表单数据序列化后结果
+     * @return 结果表单
+     */
+    @Override
+    public JSONObject ServerBatchUploadMiningResult(ArrayList<String> batchData) {
+        if (!isInit) { return null; }
+        JSONObject result = null;
+        try {
+            List<Address> singers = new ArrayList<Address>();
+            List<Uint256> taskIds = new ArrayList<Uint256>();
+            List<Uint256> points = new ArrayList<Uint256>();
+            for (int i = 0; i < batchData.size(); i++) {
+                JSONObject obj = new JSONObject(batchData.get(i));
+                if (obj.has("signer") && obj.has("taskId") && obj.has("point")) {
+                    singers.add(new Address(obj.getString("signer")));
+                    taskIds.add(new Uint256(obj.getBigInteger("taskId")));
+                    points.add(new Uint256(obj.getBigInteger("point")));
+                }
+            }
+            DynamicArray singers_ = new DynamicArray(Address.class, singers);
+            DynamicArray taskIds_ = new DynamicArray(Uint256.class, taskIds);
+            DynamicArray points_ = new DynamicArray(Uint256.class, points);
+
+
+            Function function = new Function(
+                    "doneTasks",
+                    Arrays.asList(singers_, taskIds_, points_),
+                    Collections.emptyList());
+
+            String encodedFunction = FunctionEncoder.encode(function);
+            EthGasPrice ethGasPrice = web3j.ethGasPrice().send();
+            BigInteger nonce = _getNonce(credentials.getAddress());
+            Transaction transaction = Transaction.createFunctionCallTransaction(credentials.getAddress(), nonce, ethGasPrice.getGasPrice(), null, contractAddress, encodedFunction);
+            BigInteger gasLimit = _getTransactionGasLimit(transaction);
+            RawTransaction rawTransaction = RawTransaction.createTransaction(nonce, ethGasPrice.getGasPrice(), gasLimit.multiply(BigInteger.valueOf(2)), contractAddress, encodedFunction);
+            byte[] signedMessage = TransactionEncoder.signMessage(rawTransaction, credentials);
+            String signData = Numeric.toHexString(signedMessage);
+            EthSendTransaction ethSendTransaction = web3j.ethSendRawTransaction(signData).send();
+            org.web3j.protocol.core.Response.Error error = ethSendTransaction.getError();
+            if (error == null) {
+                String hash = ethSendTransaction.getTransactionHash();
+                if (hash != null) {
+                    result = new JSONObject();
+                    result.put("code", "OK");
+                    result.put("txhash", hash);
+                }
+            }
+            else {
+                result = new JSONObject();
+                result.put("code", "ERROR");
+                result.put("error", error.getMessage());
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+        } finally {
+            return result;
+        }
+    }
+
+    /**
+     * 用于初始化SDK，相关初始化操作可放在这里
+     *
+     * @param rpcURL
+     * @param privateKey
+     * @param _contractAddress
+     */
+    @Override
+    public void Initialize(String rpcURL, String privateKey, String _contractAddress) {
+        try {
+            if (!isInit) {
+                web3j = Web3j.build(new HttpService(rpcURL));
+                EthBlockNumber respone = web3j.ethBlockNumber().send();
+                BigInteger block = respone.getBlockNumber();
+                if (block != null) {
+                    credentials = Credentials.create(privateKey);
+                    contractAddress = _contractAddress;
+                    isInit = true;
+                }
+            }
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
+
+    /**
+     * 查看SDK是否初始化, 不会有参数传入
+     *
+     * @return 是否初始化
+     */
+    @Override
+    public boolean IsInitialize() {
+        return isInit;
+    }
+
+    /**
+     * 接口所在程序结束运行的时候会调用, 不会有参数传入
+     */
+    @Override
+    public void Shutdown() {
+        if (isInit) {
+            web3j.shutdown();
+            isInit=false;
+        }
     }
 }
