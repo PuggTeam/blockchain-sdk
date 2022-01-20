@@ -11,6 +11,7 @@ import org.web3j.protocol.Web3j;
 import org.web3j.protocol.core.DefaultBlockParameterName;
 import org.web3j.protocol.core.methods.request.Transaction;
 import org.web3j.protocol.core.methods.response.*;
+import org.web3j.protocol.exceptions.TransactionException;
 import org.web3j.protocol.http.HttpService;
 import org.web3j.tx.gas.DefaultGasProvider;
 import org.web3j.utils.Collection;
@@ -21,10 +22,7 @@ import java.math.BigInteger;
 import java.security.InvalidAlgorithmParameterException;
 import java.security.NoSuchAlgorithmException;
 import java.security.NoSuchProviderException;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collections;
-import java.util.List;
+import java.util.*;
 
 public class Mining implements PuggService{
 
@@ -32,6 +30,8 @@ public class Mining implements PuggService{
     private Credentials     credentials;
     private String          contractAddress;
     private boolean         isInit = false;
+    private final           long sleepDuration = 2000;
+    private final           int attempts = 60;
     private volatile static Mining singleton;  //1:volatile修饰
     
 
@@ -120,6 +120,35 @@ public class Mining implements PuggService{
                         .sendAsync()
                         .get();
         return ethGetTransactionCount.getTransactionCount();
+    }
+
+    private TransactionReceipt _waitingReceipt(String txhash) {
+        try {
+            Optional<? extends TransactionReceipt> receiptOptional = web3j.ethGetTransactionReceipt(txhash).send().getTransactionReceipt();
+            for (int i = 0; i < attempts; i++) {
+                if (!receiptOptional.isPresent()) {
+                    try {
+                        Thread.sleep(sleepDuration);
+                    } catch (InterruptedException e) {
+                        throw new TransactionException(e);
+                    }
+                    receiptOptional = web3j.ethGetTransactionReceipt(txhash).send().getTransactionReceipt();
+                } else {
+                    return receiptOptional.get();
+                }
+            }
+
+            throw new TransactionException(
+                    "Transaction receipt was not generated after "
+                            + ((sleepDuration * attempts) / 1000
+                            + " seconds for transaction: "
+                            + txhash),
+                    txhash);
+
+        } catch (IOException | TransactionException e) {
+            e.printStackTrace();
+        }
+        return null;
     }
 
     /**
@@ -226,9 +255,19 @@ public class Mining implements PuggService{
             if (error == null) {
                 String hash = ethSendTransaction.getTransactionHash();
                 if (hash != null) {
-                    result = new JSONObject();
-                    result.put("code", "OK");
-                    result.put("txhash", hash);
+                    TransactionReceipt rec = _waitingReceipt(hash);
+                    if (rec != null) {
+                        result = new JSONObject();
+                        result.put("code", "OK");
+                        result.put("txhash", hash);
+                        result.put("status", rec.getStatus());
+                    }
+                    else {
+                        result = new JSONObject();
+                        result.put("code", "ERROR");
+                        result.put("txhash", hash);
+                        result.put("error", "Transaction receipt was not generated after");
+                    }
                 }
             }
             else {
