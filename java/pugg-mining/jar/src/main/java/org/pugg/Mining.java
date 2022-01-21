@@ -13,8 +13,8 @@ import org.web3j.protocol.core.methods.request.Transaction;
 import org.web3j.protocol.core.methods.response.*;
 import org.web3j.protocol.exceptions.TransactionException;
 import org.web3j.protocol.http.HttpService;
-import org.web3j.tx.gas.DefaultGasProvider;
-import org.web3j.utils.Collection;
+import org.web3j.tx.response.PollingTransactionReceiptProcessor;
+import org.web3j.utils.Bytes;
 import org.web3j.utils.Numeric;
 
 import java.io.IOException;
@@ -32,6 +32,8 @@ public class Mining implements PuggService{
     private boolean         isInit = false;
     private final           long sleepDuration = 2000;
     private final           int attempts = 60;
+    static final String     signMessage = "doneTask(address signer,uint256 taskId,uint256 points)";
+    private PollingTransactionReceiptProcessor processor;
     private volatile static Mining singleton;  //1:volatile修饰
     
 
@@ -74,32 +76,27 @@ public class Mining implements PuggService{
         }
     }
 
-    private BigInteger _getTaskPoints (BigInteger taskId) {
+    private BigInteger _getTaskPoints (BigInteger taskId) throws IOException {
         if (!isInit) { return null; }
         BigInteger result = null;
-        try {
-            Function function = new Function(
-                    "taskmap",
-                    Arrays.asList(new Uint256(taskId)),
-                    Arrays.asList(new TypeReference<Uint256>() {}, new TypeReference<Utf8String>() {}, new TypeReference<Uint256>() {}, new TypeReference<Uint8>() {}));
-            String encodedFunction = FunctionEncoder.encode(function);
-            EthCall response = web3j.ethCall(
-                    Transaction.createEthCallTransaction(null, contractAddress, encodedFunction),
-                    DefaultBlockParameterName.LATEST).send();
+        Function function = new Function(
+                "taskmap",
+                Arrays.asList(new Uint256(taskId)),
+                Arrays.asList(new TypeReference<Uint256>() {}, new TypeReference<Utf8String>() {}, new TypeReference<Uint256>() {}, new TypeReference<Uint8>() {}));
+        String encodedFunction = FunctionEncoder.encode(function);
+        EthCall response = web3j.ethCall(
+                Transaction.createEthCallTransaction(null, contractAddress, encodedFunction),
+                DefaultBlockParameterName.LATEST).send();
 
-            List<Type> results = FunctionReturnDecoder.decode(response.getValue(), function.getOutputParameters());
-            if (results.size() == 4) {
-                Uint8 active = (Uint8)results.get(3);
-                if (active.getValue().compareTo(BigInteger.valueOf(1)) == 0) {
-                    Uint256 points = (Uint256)results.get(2);
-                    result = points.getValue();
-                }
+        List<Type> results = FunctionReturnDecoder.decode(response.getValue(), function.getOutputParameters());
+        if (results.size() == 4) {
+            Uint8 active = (Uint8)results.get(3);
+            if (active.getValue().compareTo(BigInteger.valueOf(1)) == 0) {
+                Uint256 points = (Uint256)results.get(2);
+                result = points.getValue();
             }
-        } catch (Exception e) {
-            e.printStackTrace();
-        } finally {
-            return result;
         }
+        return result;
     }
 
     private BigInteger _getTransactionGasLimit(Transaction transaction) {
@@ -112,6 +109,8 @@ public class Mining implements PuggService{
         } catch (IOException e) {
             throw new RuntimeException("net error");
         }
+
+
     }
 
     private BigInteger _getNonce(String address) throws Exception {
@@ -120,35 +119,6 @@ public class Mining implements PuggService{
                         .sendAsync()
                         .get();
         return ethGetTransactionCount.getTransactionCount();
-    }
-
-    private TransactionReceipt _waitingReceipt(String txhash) {
-        try {
-            Optional<? extends TransactionReceipt> receiptOptional = web3j.ethGetTransactionReceipt(txhash).send().getTransactionReceipt();
-            for (int i = 0; i < attempts; i++) {
-                if (!receiptOptional.isPresent()) {
-                    try {
-                        Thread.sleep(sleepDuration);
-                    } catch (InterruptedException e) {
-                        throw new TransactionException(e);
-                    }
-                    receiptOptional = web3j.ethGetTransactionReceipt(txhash).send().getTransactionReceipt();
-                } else {
-                    return receiptOptional.get();
-                }
-            }
-
-            throw new TransactionException(
-                    "Transaction receipt was not generated after "
-                            + ((sleepDuration * attempts) / 1000
-                            + " seconds for transaction: "
-                            + txhash),
-                    txhash);
-
-        } catch (IOException | TransactionException e) {
-            e.printStackTrace();
-        }
-        return null;
     }
 
     /**
@@ -161,20 +131,37 @@ public class Mining implements PuggService{
     public JSONObject ClientGetMiningSign(int miningType) {
         if (!isInit) { return null; }
         JSONObject result = null;
-        BigInteger point = _getTaskPoints(BigInteger.valueOf(1000));
-        if (point != null) {
+        try {
+            BigInteger point = _getTaskPoints(BigInteger.valueOf(1000));
+            if (point != null) {
+                BigInteger taskId = BigInteger.valueOf(1000);
+                result = new JSONObject();
+                byte[] data =  SolidityPackEncoder.soliditySHA3(Arrays.asList(
+                        new Utf8String(signMessage),
+                        new Address(credentials.getAddress()),
+                        new Uint256(taskId),
+                        new Uint256(point)));
+                Sign.SignatureData sgindata = Sign.signPrefixedMessage(data, credentials.getEcKeyPair());
+                String signature = Numeric.toHexString(sgindata.getR()) + Numeric.toHexString(sgindata.getS()).substring(2) + Numeric.toHexString(sgindata.getV()).substring(2);
+                result.put("code", "OK");
+                result.put("signer", credentials.getAddress());
+                result.put("taskId", BigInteger.valueOf(1000));
+                result.put("point", point);
+                result.put("signature", signature.substring(2));
+                result.put("timestamp", System.currentTimeMillis());
+            }
+            else {
+                result.put("code", "ERROR");
+                result.put("error", "task does not exist or is not active");
+            }
+        } catch (IOException e) {
+            e.printStackTrace();
             result = new JSONObject();
-            result.put("code", "OK");
-            result.put("signer", credentials.getAddress());
-            result.put("taskId", BigInteger.valueOf(1000));
-            result.put("point", point);
-            result.put("timestamp", System.currentTimeMillis());
-        }
-        else {
             result.put("code", "ERROR");
-            result.put("error", "task does not exist or is not active");
+            result.put("error", e.getMessage());
+        } finally {
+            return result;
         }
-        return result;
     }
 
     /**
@@ -205,6 +192,9 @@ public class Mining implements PuggService{
             }
         } catch (Exception e) {
             e.printStackTrace();
+            result = new JSONObject();
+            result.put("code", "ERROR");
+            result.put("error", e.getMessage());
         } finally {
             return result;
         }
@@ -224,22 +214,25 @@ public class Mining implements PuggService{
             List<Address> singers = new ArrayList<Address>();
             List<Uint256> taskIds = new ArrayList<Uint256>();
             List<Uint256> points = new ArrayList<Uint256>();
+            List<Utf8String> signatures = new ArrayList<Utf8String>();
             for (int i = 0; i < batchData.size(); i++) {
                 JSONObject obj = new JSONObject(batchData.get(i));
-                if (obj.has("signer") && obj.has("taskId") && obj.has("point")) {
+                if (obj.has("signer") && obj.has("taskId") && obj.has("point") && obj.has("signature")) {
                     singers.add(new Address(obj.getString("signer")));
                     taskIds.add(new Uint256(obj.getBigInteger("taskId")));
                     points.add(new Uint256(obj.getBigInteger("point")));
+                    signatures.add(new Utf8String(obj.getString("signature")));
                 }
             }
             DynamicArray singers_ = new DynamicArray(Address.class, singers);
             DynamicArray taskIds_ = new DynamicArray(Uint256.class, taskIds);
             DynamicArray points_ = new DynamicArray(Uint256.class, points);
+            DynamicArray signatures_ = new DynamicArray(Utf8String.class, signatures);
 
 
             Function function = new Function(
                     "doneTasks",
-                    Arrays.asList(singers_, taskIds_, points_),
+                    Arrays.asList(singers_, taskIds_, points_, signatures_),
                     Collections.emptyList());
 
             String encodedFunction = FunctionEncoder.encode(function);
@@ -255,18 +248,12 @@ public class Mining implements PuggService{
             if (error == null) {
                 String hash = ethSendTransaction.getTransactionHash();
                 if (hash != null) {
-                    TransactionReceipt rec = _waitingReceipt(hash);
+                    TransactionReceipt rec = processor.waitForTransactionReceipt(hash);
                     if (rec != null) {
                         result = new JSONObject();
                         result.put("code", "OK");
                         result.put("txhash", hash);
                         result.put("status", rec.getStatus());
-                    }
-                    else {
-                        result = new JSONObject();
-                        result.put("code", "ERROR");
-                        result.put("txhash", hash);
-                        result.put("error", "Transaction receipt was not generated after");
                     }
                 }
             }
@@ -277,6 +264,9 @@ public class Mining implements PuggService{
             }
         } catch (Exception e) {
             e.printStackTrace();
+            result = new JSONObject();
+            result.put("code", "ERROR");
+            result.put("error", e.getMessage());
         } finally {
             return result;
         }
@@ -299,6 +289,7 @@ public class Mining implements PuggService{
                 if (block != null) {
                     credentials = Credentials.create(privateKey);
                     contractAddress = _contractAddress;
+                    processor = new PollingTransactionReceiptProcessor(web3j, this.sleepDuration, this.attempts);
                     isInit = true;
                 }
             }
