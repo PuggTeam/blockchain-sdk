@@ -99,7 +99,7 @@ public class SolidityPackEncoder {
     public static byte[] encodeAddress(Address type) {
         if (type == null)
             throw new IllegalArgumentException();
-        String typev = type.getValue();
+
         byte[] res = Numeric.hexStringToByteArray(type.getValue());
 
         //log.trace("encodeNumeric(val={}) => {}", type, DatatypeConverter.printHexBinary(res));

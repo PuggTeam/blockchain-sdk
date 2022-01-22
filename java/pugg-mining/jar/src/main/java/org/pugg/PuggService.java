@@ -40,6 +40,10 @@ public interface PuggService {
     void Initialize(String rpcURL, String privateKey, String _contractAddress);
 
     /**
+     * 用于等待交易哈希的返回结果
+     */
+    JSONObject WaitForTransactionReceipt(String txhash);
+    /**
      * 查看SDK是否初始化, 不会有参数传入
      * @return 是否初始化
      */

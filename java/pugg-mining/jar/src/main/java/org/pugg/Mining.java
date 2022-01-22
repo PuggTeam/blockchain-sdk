@@ -11,6 +11,7 @@ import org.web3j.protocol.Web3j;
 import org.web3j.protocol.core.DefaultBlockParameterName;
 import org.web3j.protocol.core.methods.request.Transaction;
 import org.web3j.protocol.core.methods.response.*;
+import org.web3j.protocol.core.Response.Error;
 import org.web3j.protocol.exceptions.TransactionException;
 import org.web3j.protocol.http.HttpService;
 import org.web3j.tx.response.PollingTransactionReceiptProcessor;
@@ -33,7 +34,6 @@ public class Mining implements PuggService{
     private final           long sleepDuration = 2000;
     private final           int attempts = 60;
     static final String     signMessage = "doneTask(address signer,uint256 taskId,uint256 points)";
-    private PollingTransactionReceiptProcessor processor;
     private volatile static Mining singleton;  //1:volatile修饰
     
 
@@ -241,20 +241,15 @@ public class Mining implements PuggService{
             Transaction transaction = Transaction.createFunctionCallTransaction(credentials.getAddress(), nonce, ethGasPrice.getGasPrice(), null, contractAddress, encodedFunction);
             BigInteger gasLimit = _getTransactionGasLimit(transaction);
             RawTransaction rawTransaction = RawTransaction.createTransaction(nonce, ethGasPrice.getGasPrice(), gasLimit.multiply(BigInteger.valueOf(2)), contractAddress, encodedFunction);
-            byte[] signedMessage = TransactionEncoder.signMessage(rawTransaction, credentials);
-            String signData = Numeric.toHexString(signedMessage);
+            String signData = Numeric.toHexString(TransactionEncoder.signMessage(rawTransaction, credentials));
             EthSendTransaction ethSendTransaction = web3j.ethSendRawTransaction(signData).send();
-            org.web3j.protocol.core.Response.Error error = ethSendTransaction.getError();
+            Error error = ethSendTransaction.getError();
             if (error == null) {
                 String hash = ethSendTransaction.getTransactionHash();
                 if (hash != null) {
-                    TransactionReceipt rec = processor.waitForTransactionReceipt(hash);
-                    if (rec != null) {
-                        result = new JSONObject();
-                        result.put("code", "OK");
-                        result.put("txhash", hash);
-                        result.put("status", rec.getStatus());
-                    }
+                    result = new JSONObject();
+                    result.put("code", "OK");
+                    result.put("txhash", hash);
                 }
             }
             else {
@@ -289,12 +284,39 @@ public class Mining implements PuggService{
                 if (block != null) {
                     credentials = Credentials.create(privateKey);
                     contractAddress = _contractAddress;
-                    processor = new PollingTransactionReceiptProcessor(web3j, this.sleepDuration, this.attempts);
                     isInit = true;
                 }
             }
         } catch (IOException e) {
             e.printStackTrace();
+        }
+    }
+
+    /**
+     * 用于等待交易哈希的返回结果
+     *
+     * @param hash
+     */
+    @Override
+    public JSONObject WaitForTransactionReceipt(String hash) {
+        if (!isInit) { return null; }
+        JSONObject result = null;
+        try {
+            PollingTransactionReceiptProcessor processor = new PollingTransactionReceiptProcessor(web3j, this.sleepDuration, this.attempts);
+            TransactionReceipt rec = processor.waitForTransactionReceipt(hash);
+            if (rec != null) {
+                result = new JSONObject();
+                result.put("code", "OK");
+                result.put("txhash", hash);
+                result.put("status", rec.getStatus());
+            }
+        } catch (IOException | TransactionException e) {
+            e.printStackTrace();
+            result = new JSONObject();
+            result.put("code", "ERROR");
+            result.put("error", e.getMessage());
+        } finally {
+            return result;
         }
     }
 
